@@ -18,75 +18,72 @@ from rl.wrappers import wrap_gym
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string('env_name', 'A1Run-v0', 'Environment name.')
 flags.DEFINE_string('save_dir', './tmp/', 'Tensorboard logging dir.')
 flags.DEFINE_integer('seed', 42, 'Random seed.')
-flags.DEFINE_integer('eval_episodes', 1,
-                     'Number of episodes used for evaluation.')
 flags.DEFINE_integer('log_interval', 1000, 'Logging interval.')
-flags.DEFINE_integer('eval_interval', 1000, 'Eval interval.')
+flags.DEFINE_integer('checkpoint_interval', 1000, 'Checkpoing interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
-flags.DEFINE_integer('start_training', int(1e4),
+flags.DEFINE_integer('start_training', int(1e3),
                      'Number of training steps to start training.')
-flags.DEFINE_boolean('tqdm', True, 'Use tqdm progress bar.')
-flags.DEFINE_boolean('wandb', True, 'Log wandb.')
-flags.DEFINE_boolean('save_video', False, 'Save videos during evaluation.')
-flags.DEFINE_float('action_filter_high_cut', None, 'Action filter high cut.')
-flags.DEFINE_integer('action_history', 1, 'Action history.')
-flags.DEFINE_integer('control_frequency', 20, 'Control frequency.')
-flags.DEFINE_integer('utd_ratio', 1, 'Update to data ratio.')
-flags.DEFINE_boolean('real_robot', False, 'Use real robot.')
+# flags.DEFINE_float('action_filter_high_cut', None, 'Action filter high cut.')
+# flags.DEFINE_integer('action_history', 1, 'Action history.')
+# flags.DEFINE_integer('control_frequency', 20, 'Control frequency.')
+flags.DEFINE_integer('utd_ratio', 20, 'Update to data ratio.')
+flags.DEFINE_boolean('real_robot', True, 'Use real robot.')
 config_flags.DEFINE_config_file(
     'config',
-    'configs/sac_config.py',
+    'walk_in_the_park/configs/droq_config.py',
     'File path to the training hyperparameter configuration.',
     lock_config=False)
 
 
 def main(_):
-    wandb.init(project='a1')
+    wandb.init(project='real_franka_reach')
     wandb.config.update(FLAGS)
 
+    from robot.utils import HZ
+
+    exp_str = '013023_real_franka_reach'
+
     if FLAGS.real_robot:
-        from real.envs.a1_env import A1Real
-        env = A1Real(zero_action=np.asarray([0.05, 0.9, -1.8] * 4))
+        from robot.env import SimpleRealFrankReach
+        env = SimpleRealFrankReach(
+            goal=np.array([0.8, 0.0, 0.4]),
+            home="default",
+            hz=HZ,
+            controller="cartesian",
+            mode="default",
+            use_camera=False,
+            use_gripper=False,
+        )
     else:
-        from env_utils import make_mujoco_env
-        env = make_mujoco_env(
-            FLAGS.env_name,
-            control_frequency=FLAGS.control_frequency,
-            action_filter_high_cut=FLAGS.action_filter_high_cut,
-            action_history=FLAGS.action_history)
+        assert False # what are you doing
 
     env = wrap_gym(env, rescale_actions=True)
+
+    from gym.wrappers.time_limit import TimeLimit
+    MAX_EPISODE_TIME_S = 30
+    MAX_STEPS = HZ * MAX_EPISODE_TIME_S
+    env = TimeLimit(env, MAX_STEPS)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
-    env = gym.wrappers.RecordVideo(
-        env,
-        f'videos/train_{FLAGS.action_filter_high_cut}',
-        episode_trigger=lambda x: True)
+    # env = gym.wrappers.RecordVideo(
+    #     env,
+    #     f'videos/train_{FLAGS.action_filter_high_cut}',
+    #     episode_trigger=lambda x: True)
     env.seed(FLAGS.seed)
 
-    if not FLAGS.real_robot:
-        eval_env = make_mujoco_env(
-            FLAGS.env_name,
-            control_frequency=FLAGS.control_frequency,
-            action_filter_high_cut=FLAGS.action_filter_high_cut,
-            action_history=FLAGS.action_history)
-        eval_env = wrap_gym(eval_env, rescale_actions=True)
-        eval_env = gym.wrappers.RecordVideo(
-            eval_env,
-            f'videos/eval_{FLAGS.action_filter_high_cut}',
-            episode_trigger=lambda x: True)
-        eval_env.seed(FLAGS.seed + 42)
 
     kwargs = dict(FLAGS.config)
     agent = SACLearner.create(FLAGS.seed, env.observation_space,
                               env.action_space, **kwargs)
 
-    chkpt_dir = 'saved/checkpoints'
+    exp_dir = f'walk_in_the_park/saved/{exp_str}'
+    chkpt_dir = f'{exp_dir}/checkpoints'
+    if os.path.exists(exp_dir):
+        shutil.rmtree(exp_dir)
     os.makedirs(chkpt_dir, exist_ok=True)
-    buffer_dir = 'saved/buffers'
+    buffer_dir = f'{exp_dir}/buffers'
 
     last_checkpoint = checkpoints.latest_checkpoint(chkpt_dir)
 
@@ -141,14 +138,7 @@ def main(_):
                 for k, v in update_info.items():
                     wandb.log({f'training/{k}': v}, step=i)
 
-        if i % FLAGS.eval_interval == 0:
-            if not FLAGS.real_robot:
-                eval_info = evaluate(agent,
-                                     eval_env,
-                                     num_episodes=FLAGS.eval_episodes)
-                for k, v in eval_info.items():
-                    wandb.log({f'evaluation/{k}': v}, step=i)
-
+        if i % FLAGS.checkpoint_interval == 0:
             checkpoints.save_checkpoint(chkpt_dir,
                                         agent,
                                         step=i + 1,
