@@ -26,6 +26,7 @@ flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
 flags.DEFINE_integer('start_training', int(1e3),
                      'Number of training steps to start training.')
+flags.DEFINE_boolean('tqdm', True, 'Use tqdm progress bar.')
 # flags.DEFINE_float('action_filter_high_cut', None, 'Action filter high cut.')
 # flags.DEFINE_integer('action_history', 1, 'Action history.')
 # flags.DEFINE_integer('control_frequency', 20, 'Control frequency.')
@@ -44,23 +45,29 @@ def main(_):
 
     from robot.utils import HZ
 
-    exp_str = '013023_real_franka_reach'
+    # defaults
+    use_gripper, use_camera, use_r3m, obs_key = False, False, False, None
+
+    # exp_str = '013023_real_franka_reach'
+    exp_str = '013023_reach_with_gripper_and_camera'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_vec"
 
     if FLAGS.real_robot:
         from robot.env import SimpleRealFrankReach
         env = SimpleRealFrankReach(
-            goal=np.array([0.8, 0.0, 0.4]),
+            goal=np.array([0.68, 0.0, 0.4]),
             home="default",
             hz=HZ,
             controller="cartesian",
             mode="default",
-            use_camera=False,
-            use_gripper=False,
+            use_camera=use_camera,
+            use_gripper=use_gripper,
+            use_r3m=use_r3m,
+            only_pos_control=True
         )
     else:
         assert False # what are you doing
 
-    env = wrap_gym(env, rescale_actions=True)
+    env = wrap_gym(env, rescale_actions=True, obs_key=obs_key)
 
     from gym.wrappers.time_limit import TimeLimit
     MAX_EPISODE_TIME_S = 30
