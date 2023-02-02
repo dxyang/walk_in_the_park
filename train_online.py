@@ -1,8 +1,10 @@
 #! /usr/bin/env python
 import os
+from pathlib import Path
 import pickle
 import shutil
 
+import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
 
@@ -16,12 +18,15 @@ from rl.data import ReplayBuffer
 from rl.evaluation import evaluate
 from rl.wrappers import wrap_gym
 
+from cam.utils import VideoRecorder
+
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('save_dir', './tmp/', 'Tensorboard logging dir.')
 flags.DEFINE_integer('seed', 42, 'Random seed.')
 flags.DEFINE_integer('log_interval', 1000, 'Logging interval.')
-flags.DEFINE_integer('checkpoint_interval', 1000, 'Checkpoing interval.')
+flags.DEFINE_integer('checkpoint_interval', 5000, 'Checkpointing interval.')
+flags.DEFINE_integer('eval_interval', 10000, 'Eval interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
 flags.DEFINE_integer('start_training', int(1e3),
@@ -32,6 +37,7 @@ flags.DEFINE_boolean('tqdm', True, 'Use tqdm progress bar.')
 # flags.DEFINE_integer('control_frequency', 20, 'Control frequency.')
 flags.DEFINE_integer('utd_ratio', 20, 'Update to data ratio.')
 flags.DEFINE_boolean('real_robot', True, 'Use real robot.')
+flags.DEFINE_integer('lrf_update_frequency', 1000, 'Update lrf every x timesteps.')
 config_flags.DEFINE_config_file(
     'config',
     'walk_in_the_park/configs/droq_config.py',
@@ -39,22 +45,78 @@ config_flags.DEFINE_config_file(
     lock_config=False)
 
 
+def eval(env, agent, exp_dir: str, curr_step: int, num_episodes: int = 5):
+    # run some eval episodes and plot the reward to
+    # get a sense of what real data looks like
+    curr_step_str = str(curr_step).zfill(6)
+    video_dir = Path(f"{exp_dir}/eval/{curr_step_str}")
+    if not os.path.exists(str(video_dir)):
+        os.makedirs(str(video_dir))
+    recorder = VideoRecorder(save_dir=video_dir, fps=env.hz)
+
+    all_rewards = []
+    for i in range(num_episodes):
+        observation, done = env.reset(), False
+        rgbs, rewards = [], []
+        rgbs.append(env.rgb.copy())
+        while not done:
+            action, agent = agent.sample_actions(observation)
+            next_observation, reward, done, info = env.step(action)
+            rewards.append(reward)
+            rgbs.append(env.rgb.copy())
+            observation = next_observation
+            if done:
+                break
+
+        # bookkeeping
+        all_rewards.append(rewards)
+
+        # save video
+        for frame_idx, rgb_frame in enumerate(rgbs):
+            if frame_idx == 0:
+                recorder.init(rgb_frame)
+            else:
+                recorder.record(rgb_frame)
+        save_str = str(i).zfill(2)
+        recorder.save(f"{save_str}.mp4")
+
+    # plot rewards
+    plt.clf(); plt.cla()
+    for i, reward_traj in enumerate(all_rewards):
+        plt.plot(reward_traj, label=f"{str(i).zfill(2)}_{np.sum(reward_traj)}")
+    plt.ylim(0, 1)
+    plt.legend()
+    plt.savefig(f"{video_dir}/rewards.png")
+
+
+
 def main(_):
     wandb.init(project='real_franka_reach')
     wandb.config.update(FLAGS)
 
+    from gym.wrappers.time_limit import TimeLimit
+    from reward_extraction.reward_functions import RobotLearnedRewardFunction
+    from robot.env import SimpleRealFrankReach, LrfRealFrankaReach
     from robot.utils import HZ
 
     # defaults
     use_gripper, use_camera, use_r3m, obs_key = False, False, False, None
+    MAX_EPISODE_TIME_S = 15
+    MAX_STEPS = HZ * MAX_EPISODE_TIME_S
 
     # exp_str = '013023_real_franka_reach'
-    exp_str = '013023_reach_with_gripper_and_camera'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_vec"
+    # exp_str = '013023_reach_with_gripper_and_camera'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_vec"
+    # exp_str = 'r3m50_experiment'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_vec"
+    # exp_str = '020123_couscous_reach'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_vec"
+    # exp_str = '020123_couscous_reach_rlwithppc'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    # exp_str = '020123_couscous_reach_rlwithppc_bigsteps'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    exp_str = '020223_couscous_reach_rlwithppc_bigsteps_and_rankinginit'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+
+    repo_root = Path.cwd()
+    exp_dir = f'{repo_root}/walk_in_the_park/saved/{exp_str}'
 
     if FLAGS.real_robot:
-        from robot.env import SimpleRealFrankReach
-        env = SimpleRealFrankReach(
-            goal=np.array([0.68, 0.0, 0.4]),
+        env = LrfRealFrankaReach(
             home="default",
             hz=HZ,
             controller="cartesian",
@@ -62,16 +124,25 @@ def main(_):
             use_camera=use_camera,
             use_gripper=use_gripper,
             use_r3m=use_r3m,
-            only_pos_control=True
+            only_pos_control=True,
+            random_reset_home_pose=True,
         )
+        # env = SimpleRealFrankReach(
+        #     goal=np.array([0.68, 0.0, 0.4]),
+        #     home="default",
+        #     hz=HZ,
+        #     controller="cartesian",
+        #     mode="default",
+        #     use_camera=use_camera,
+        #     use_gripper=use_gripper,
+        #     use_r3m=use_r3m,
+        #     only_pos_control=True
+        # )
     else:
         assert False # what are you doing
 
     env = wrap_gym(env, rescale_actions=True, obs_key=obs_key)
 
-    from gym.wrappers.time_limit import TimeLimit
-    MAX_EPISODE_TIME_S = 30
-    MAX_STEPS = HZ * MAX_EPISODE_TIME_S
     env = TimeLimit(env, MAX_STEPS)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
     # env = gym.wrappers.RecordVideo(
@@ -85,10 +156,9 @@ def main(_):
     agent = SACLearner.create(FLAGS.seed, env.observation_space,
                               env.action_space, **kwargs)
 
-    exp_dir = f'walk_in_the_park/saved/{exp_str}'
     chkpt_dir = f'{exp_dir}/checkpoints'
-    if os.path.exists(exp_dir):
-        shutil.rmtree(exp_dir)
+    # if os.path.exists(exp_dir):
+    #     shutil.rmtree(exp_dir)
     os.makedirs(chkpt_dir, exist_ok=True)
     buffer_dir = f'{exp_dir}/buffers'
 
@@ -99,13 +169,31 @@ def main(_):
         replay_buffer = ReplayBuffer(env.observation_space, env.action_space,
                                      FLAGS.max_steps)
         replay_buffer.seed(FLAGS.seed)
+        print(f"no checkpoint!")
     else:
         start_i = int(last_checkpoint.split('_')[-1])
 
-        agent = checkpoints.restore_checkpoint(last_checkpoint, agent)
+        agent = checkpoints.restore_checkpoint(last_checkpoint, agent, parallel=False)
 
         with open(os.path.join(buffer_dir, f'buffer_{start_i}'), 'rb') as f:
             replay_buffer = pickle.load(f)
+
+        print(f"restoring checkpoint! {last_checkpoint} at t: {start_i}")
+
+    '''
+    setup learned reward function
+    '''
+    r3m_embedding_dim = 2048
+    lrf = RobotLearnedRewardFunction(
+        obs_size=r3m_embedding_dim,
+        exp_dir=exp_dir,
+        demo_path="/home/dxy/code/rewardlearning-robot/data/demos/couscous_reach/demos.hdf",
+        replay_buffer=replay_buffer,
+        horizon=MAX_STEPS,
+    )
+    if last_checkpoint is not None:
+        lrf.load_models()
+    env.set_lrf(lrf)
 
     observation, done = env.reset(), False
     for i in tqdm.tqdm(range(start_i, FLAGS.max_steps),
@@ -141,9 +229,18 @@ def main(_):
             batch = replay_buffer.sample(FLAGS.batch_size * FLAGS.utd_ratio)
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
 
+            if i % FLAGS.lrf_update_frequency == 0:
+                lrf.train(FLAGS.utd_ratio)
+
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
                     wandb.log({f'training/{k}': v}, step=i)
+
+            if i % (FLAGS.lrf_update_frequency * 5) == 0:
+                lrf.eval_lrf()
+
+        if i % FLAGS.eval_interval == 0:
+            eval(env, agent, exp_dir, i)
 
         if i % FLAGS.checkpoint_interval == 0:
             checkpoints.save_checkpoint(chkpt_dir,
