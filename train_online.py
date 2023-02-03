@@ -26,7 +26,8 @@ flags.DEFINE_string('save_dir', './tmp/', 'Tensorboard logging dir.')
 flags.DEFINE_integer('seed', 42, 'Random seed.')
 flags.DEFINE_integer('log_interval', 1000, 'Logging interval.')
 flags.DEFINE_integer('checkpoint_interval', 5000, 'Checkpointing interval.')
-flags.DEFINE_integer('eval_interval', 10000, 'Eval interval.')
+flags.DEFINE_integer('lrf_update_frequency', 1000, 'Update lrf every x timesteps.')
+flags.DEFINE_integer('eval_interval', 1000, 'Eval interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
 flags.DEFINE_integer('start_training', int(1e3),
@@ -37,7 +38,6 @@ flags.DEFINE_boolean('tqdm', True, 'Use tqdm progress bar.')
 # flags.DEFINE_integer('control_frequency', 20, 'Control frequency.')
 flags.DEFINE_integer('utd_ratio', 20, 'Update to data ratio.')
 flags.DEFINE_boolean('real_robot', True, 'Use real robot.')
-flags.DEFINE_integer('lrf_update_frequency', 1000, 'Update lrf every x timesteps.')
 config_flags.DEFINE_config_file(
     'config',
     'walk_in_the_park/configs/droq_config.py',
@@ -54,21 +54,29 @@ def eval(env, agent, exp_dir: str, curr_step: int, num_episodes: int = 5):
         os.makedirs(str(video_dir))
     recorder = VideoRecorder(save_dir=video_dir, fps=env.hz)
 
-    all_rewards = []
+    all_progresses, all_masks, all_rewards = [], [], []
     for i in range(num_episodes):
         observation, done = env.reset(), False
-        rgbs, rewards = [], []
+        rgbs, progresses, masks, rewards = [], [], [], []
         rgbs.append(env.rgb.copy())
         while not done:
-            action, agent = agent.sample_actions(observation)
-            next_observation, reward, done, info = env.step(action)
-            rewards.append(reward)
-            rgbs.append(env.rgb.copy())
-            observation = next_observation
-            if done:
-                break
+            action, agent = agent.eval_actions(observation)
+            next_observation, r, done, info = env.step(action)
+            progress, mask, reward = env.lrf.last_pmr()
+            try:
+                progresses.append(float(progress))
+                masks.append(float(mask))
+                rewards.append(float(reward))
+                rgbs.append(env.rgb.copy())
+                observation = next_observation
+                if done:
+                    break
+            except:
+                import pdb; pdb.set_trace()
 
         # bookkeeping
+        all_progresses.append(progresses)
+        all_masks.append(masks)
         all_rewards.append(rewards)
 
         # save video
@@ -80,13 +88,37 @@ def eval(env, agent, exp_dir: str, curr_step: int, num_episodes: int = 5):
         save_str = str(i).zfill(2)
         recorder.save(f"{save_str}.mp4")
 
-    # plot rewards
+        # plot each video individually as well
+        plt.clf(); plt.cla()
+        plt.plot(progresses, label="progress")
+        plt.plot(masks, label='mask')
+        plt.plot(rewards, label='reward')
+        plt.ylim(0, 1)
+        traj_idx_str = str(i).zfill(2)
+        plt.legend()
+        plt.savefig(f"{video_dir}/{traj_idx_str}_pmr.png")
+
+    # plot
     plt.clf(); plt.cla()
     for i, reward_traj in enumerate(all_rewards):
         plt.plot(reward_traj, label=f"{str(i).zfill(2)}_{np.sum(reward_traj)}")
     plt.ylim(0, 1)
     plt.legend()
     plt.savefig(f"{video_dir}/rewards.png")
+
+    plt.clf(); plt.cla()
+    for i, progress_traj in enumerate(all_progresses):
+        plt.plot(progress_traj, label=f"{str(i).zfill(2)}")
+    plt.ylim(0, 1)
+    plt.legend()
+    plt.savefig(f"{video_dir}/progresses.png")
+
+    plt.clf(); plt.cla()
+    for i, mask_traj in enumerate(all_masks):
+        plt.plot(mask_traj, label=f"{str(i).zfill(2)}")
+    plt.ylim(0, 1)
+    plt.legend()
+    plt.savefig(f"{video_dir}/masks.png")
 
 
 
@@ -229,25 +261,29 @@ def main(_):
             batch = replay_buffer.sample(FLAGS.batch_size * FLAGS.utd_ratio)
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
 
-            if i % FLAGS.lrf_update_frequency == 0:
-                lrf.train(FLAGS.utd_ratio)
-
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
                     wandb.log({f'training/{k}': v}, step=i)
 
-            if i % (FLAGS.lrf_update_frequency * 5) == 0:
+            if i % FLAGS.lrf_update_frequency == 0:
+                lrf.train(FLAGS.utd_ratio)
+
+            if i % (FLAGS.lrf_update_frequency * 2) == 0:
                 lrf.eval_lrf()
 
-        if i % FLAGS.eval_interval == 0:
-            eval(env, agent, exp_dir, i)
+            if i % FLAGS.eval_interval == 0:
+                eval(env, agent, exp_dir, i)
 
-        if i % FLAGS.checkpoint_interval == 0:
+        if i % FLAGS.checkpoint_interval == 0 and i > 0:
             checkpoints.save_checkpoint(chkpt_dir,
                                         agent,
                                         step=i + 1,
                                         keep=20,
                                         overwrite=True)
+
+            if lrf._seen_on_policy_data:
+                lrf.save_models()
+                lrf.eval_lrf()
 
             try:
                 shutil.rmtree(buffer_dir)
