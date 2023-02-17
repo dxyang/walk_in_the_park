@@ -1,10 +1,13 @@
-from typing import Optional, Union
+from typing import Optional, Union, Iterable, Tuple
 
+from flax.core import frozen_dict
 import gym
 import gym.spaces
 import numpy as np
 
+
 from rl.data.dataset import Dataset, DatasetDict
+from rl.data.image_buffer import ImageReplayBuffer
 
 
 def _init_replay_dict(obs_space: gym.Space,
@@ -38,13 +41,16 @@ class ReplayBuffer(Dataset):
                  observation_space: gym.Space,
                  action_space: gym.Space,
                  capacity: int,
-                 next_observation_space: Optional[gym.Space] = None):
+                 next_observation_space: Optional[gym.Space] = None,
+                 image_shape: Optional[Tuple[int]] = None,
+                 image_disk_save_path: Optional[str] = None):
         if next_observation_space is None:
             next_observation_space = observation_space
 
         observation_data = _init_replay_dict(observation_space, capacity)
         next_observation_data = _init_replay_dict(next_observation_space,
                                                   capacity)
+
         dataset_dict = dict(
             observations=observation_data,
             next_observations=next_observation_data,
@@ -54,6 +60,11 @@ class ReplayBuffer(Dataset):
             masks=np.empty((capacity, ), dtype=np.float32),
             dones=np.empty((capacity, ), dtype=bool),
         )
+
+        if image_shape is not None:
+            # unlike the other things stored, this will depend on disk storage space
+            # since 1_000_000 images in RAM isn't great
+            self.image_replay_buffer = ImageReplayBuffer(capacity=capacity, img_shape=image_shape, save_path=image_disk_save_path)
 
         super().__init__(dataset_dict)
 
@@ -65,7 +76,28 @@ class ReplayBuffer(Dataset):
         return self._size
 
     def insert(self, data_dict: DatasetDict):
+        if "images" in data_dict:
+            assert self._insert_index == self.image_replay_buffer.insert_idx
+            self.image_replay_buffer.add(data_dict["images"])
+            del data_dict["images"]
+
         _insert_recursively(self.dataset_dict, data_dict, self._insert_index)
 
         self._insert_index = (self._insert_index + 1) % self._capacity
         self._size = min(self._size + 1, self._capacity)
+
+    def sample(self,
+               batch_size: int,
+               keys: Optional[Iterable[str]] = None,
+               indx: Optional[np.ndarray] = None) -> frozen_dict.FrozenDict:
+        if indx is None:
+            if hasattr(self.np_random, 'integers'):
+                indx = self.np_random.integers(len(self), size=batch_size)
+            else:
+                indx = self.np_random.randint(len(self), size=batch_size)
+
+        frozen_dict_batch = super().sample(batch_size, keys, indx)
+
+        images = [self.image_replay_buffer[idx] for idx in indx]
+
+        return frozen_dict_batch, images
