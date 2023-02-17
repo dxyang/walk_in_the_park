@@ -17,6 +17,7 @@ from rl.agents import SACLearner
 from rl.data import ReplayBuffer
 from rl.evaluation import evaluate
 from rl.wrappers import wrap_gym
+from r3m import load_r3m
 
 from cam.utils import VideoRecorder
 
@@ -38,6 +39,7 @@ flags.DEFINE_boolean('tqdm', True, 'Use tqdm progress bar.')
 # flags.DEFINE_integer('control_frequency', 20, 'Control frequency.')
 flags.DEFINE_integer('utd_ratio', 20, 'Update to data ratio.')
 flags.DEFINE_boolean('real_robot', True, 'Use real robot.')
+flags.DEFINE_string('demo_dir', "/home/dxy/code/rewardlearning-robot/data/demos/couscous_reach", 'Demo directory')
 config_flags.DEFINE_config_file(
     'config',
     'walk_in_the_park/configs/droq_config.py',
@@ -60,10 +62,10 @@ def eval(env, agent, exp_dir: str, curr_step: int, num_episodes: int = 5):
         rgbs, progresses, masks, rewards = [], [], [], []
         rgbs.append(env.rgb.copy())
         while not done:
-            action, agent = agent.eval_actions(observation)
-            next_observation, r, done, info = env.step(action)
-            progress, mask, reward = env.lrf.last_pmr()
             try:
+                action = agent.eval_actions(observation)
+                next_observation, r, done, info = env.step(action)
+                progress, mask, reward = env.lrf.last_pmr()
                 progresses.append(float(progress))
                 masks.append(float(mask))
                 rewards.append(float(reward))
@@ -142,10 +144,18 @@ def main(_):
     # exp_str = '020123_couscous_reach'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_vec"
     # exp_str = '020123_couscous_reach_rlwithppc'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '020123_couscous_reach_rlwithppc_bigsteps'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    exp_str = '020223_couscous_reach_rlwithppc_bigsteps_and_rankinginit'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    # exp_str = '020223_couscous_reach_rlwithppc_bigsteps_and_rankinginit'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    exp_str = '021723_debugnewcode'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
 
     repo_root = Path.cwd()
     exp_dir = f'{repo_root}/walk_in_the_park/saved/{exp_str}'
+
+    # load r3m here so multiple things can use it without having multiple resnets loaded into GPU memory
+    r3m_net = load_r3m("resnet50")
+    # r3m_net = load_r3m("resnet18")
+    r3m_net.to("cuda")
+    r3m_net.eval()
+    r3m_embedding_dim = 2048 #512 #2048
 
     if FLAGS.real_robot:
         env = LrfRealFrankaReach(
@@ -156,6 +166,7 @@ def main(_):
             use_camera=use_camera,
             use_gripper=use_gripper,
             use_r3m=use_r3m,
+            r3m_net=r3m_net,
             only_pos_control=True,
             random_reset_home_pose=True,
         )
@@ -183,23 +194,26 @@ def main(_):
     #     episode_trigger=lambda x: True)
     env.seed(FLAGS.seed)
 
-
     kwargs = dict(FLAGS.config)
     agent = SACLearner.create(FLAGS.seed, env.observation_space,
                               env.action_space, **kwargs)
 
     chkpt_dir = f'{exp_dir}/checkpoints'
-    # if os.path.exists(exp_dir):
-    #     shutil.rmtree(exp_dir)
+    if os.path.exists(exp_dir):
+        shutil.rmtree(exp_dir)
     os.makedirs(chkpt_dir, exist_ok=True)
     buffer_dir = f'{exp_dir}/buffers'
+    os.makedirs(buffer_dir, exist_ok=True)
+    img_buffer_path = f'{buffer_dir}/image_buffer.hdf'
 
     last_checkpoint = checkpoints.latest_checkpoint(chkpt_dir)
 
     if last_checkpoint is None:
         start_i = 0
         replay_buffer = ReplayBuffer(env.observation_space, env.action_space,
-                                     FLAGS.max_steps)
+                                     FLAGS.max_steps,
+                                     image_shape=env.image_space.shape,
+                                     image_disk_save_path=img_buffer_path)
         replay_buffer.seed(FLAGS.seed)
         print(f"no checkpoint!")
     else:
@@ -215,19 +229,20 @@ def main(_):
     '''
     setup learned reward function
     '''
-    r3m_embedding_dim = 2048
     lrf = RobotLearnedRewardFunction(
         obs_size=r3m_embedding_dim,
         exp_dir=exp_dir,
-        demo_path="/home/dxy/code/rewardlearning-robot/data/demos/couscous_reach/demos.hdf",
+        demo_path=f"{FLAGS.demo_dir}/demos.hdf",
         replay_buffer=replay_buffer,
         horizon=MAX_STEPS,
+        r3m_net=r3m_net,
     )
     if last_checkpoint is not None:
         lrf.load_models()
     env.set_lrf(lrf)
 
     observation, done = env.reset(), False
+    image = env.get_image()
     for i in tqdm.tqdm(range(start_i, FLAGS.max_steps),
                        smoothing=0.1,
                        disable=not FLAGS.tqdm):
@@ -236,6 +251,7 @@ def main(_):
         else:
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
+        next_image = env.get_image()
 
         if not done or 'TimeLimit.truncated' in info:
             mask = 1.0
@@ -248,8 +264,10 @@ def main(_):
                  rewards=reward,
                  masks=mask,
                  dones=done,
-                 next_observations=next_observation))
+                 next_observations=next_observation,
+                 images=image))
         observation = next_observation
+        image = next_image
 
         if done:
             observation, done = env.reset(), False
@@ -258,8 +276,16 @@ def main(_):
                 wandb.log({f'training/{decode[k]}': v}, step=i)
 
         if i >= FLAGS.start_training:
-            batch = replay_buffer.sample(FLAGS.batch_size * FLAGS.utd_ratio)
+            import time
+
+            start = time.time()
+            batch, _ = replay_buffer.sample(FLAGS.batch_size * FLAGS.utd_ratio)
+            end = time.time()
+            print(f"{end - start} seconds to sample from replay buffer")
+
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
+            new_end = time.time()
+            print(f"{new_end - end} seconds to update agent")
 
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
