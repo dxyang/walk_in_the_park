@@ -15,6 +15,7 @@ from flax.training import checkpoints
 from ml_collections import config_flags
 from rl.agents import SACLearner
 from rl.data import ReplayBuffer
+from rl.data.image_buffer import RAMImageReplayBuffer
 from rl.evaluation import evaluate
 from rl.wrappers import wrap_gym
 from r3m import load_r3m
@@ -212,8 +213,9 @@ def main(_):
         start_i = 0
         replay_buffer = ReplayBuffer(env.observation_space, env.action_space,
                                      FLAGS.max_steps,
-                                     image_shape=env.image_space.shape,
+                                     image_shape=None,
                                      image_disk_save_path=img_buffer_path)
+        img_replay_buffer = RAMImageReplayBuffer(capacity=50_000, img_shape=env.image_space.shape)
         replay_buffer.seed(FLAGS.seed)
         print(f"no checkpoint!")
     else:
@@ -223,6 +225,8 @@ def main(_):
 
         with open(os.path.join(buffer_dir, f'buffer_{start_i}'), 'rb') as f:
             replay_buffer = pickle.load(f)
+        with open(os.path.join(buffer_dir, f'image_buffer_{start_i}'), 'rb') as f:
+            img_replay_buffer = pickle.load(f)
 
         print(f"restoring checkpoint! {last_checkpoint} at t: {start_i}")
 
@@ -234,6 +238,7 @@ def main(_):
         exp_dir=exp_dir,
         demo_path=f"{FLAGS.demo_dir}/demos.hdf",
         replay_buffer=replay_buffer,
+        image_replay_buffer=img_replay_buffer,
         horizon=MAX_STEPS,
         r3m_net=r3m_net,
     )
@@ -258,14 +263,14 @@ def main(_):
         else:
             mask = 0.0
 
+        img_replay_buffer.add(image)
         replay_buffer.insert(
             dict(observations=observation,
                  actions=action,
                  rewards=reward,
                  masks=mask,
                  dones=done,
-                 next_observations=next_observation,
-                 images=image))
+                 next_observations=next_observation))
         observation = next_observation
         image = next_image
 
@@ -279,7 +284,7 @@ def main(_):
             import time
 
             start = time.time()
-            batch, _ = replay_buffer.sample(FLAGS.batch_size * FLAGS.utd_ratio)
+            batch = replay_buffer.sample(FLAGS.batch_size * FLAGS.utd_ratio)
             end = time.time()
             print(f"{end - start} seconds to sample from replay buffer")
 
@@ -319,6 +324,8 @@ def main(_):
             os.makedirs(buffer_dir, exist_ok=True)
             with open(os.path.join(buffer_dir, f'buffer_{i+1}'), 'wb') as f:
                 pickle.dump(replay_buffer, f)
+            with open(os.path.join(buffer_dir, f'image_buffer_{i+1}'), 'wb') as f:
+                pickle.dump(img_replay_buffer, f)
 
 
 if __name__ == '__main__':

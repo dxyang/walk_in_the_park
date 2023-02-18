@@ -7,7 +7,7 @@ import numpy as np
 
 
 from rl.data.dataset import Dataset, DatasetDict
-from rl.data.image_buffer import ImageReplayBuffer
+from rl.data.image_buffer import DiskImageReplayBuffer
 
 
 def _init_replay_dict(obs_space: gym.Space,
@@ -61,10 +61,10 @@ class ReplayBuffer(Dataset):
             dones=np.empty((capacity, ), dtype=bool),
         )
 
-        if image_shape is not None:
-            # unlike the other things stored, this will depend on disk storage space
-            # since 1_000_000 images in RAM isn't great
-            self.image_replay_buffer = ImageReplayBuffer(capacity=capacity, img_shape=image_shape, save_path=image_disk_save_path)
+        # if image_shape is not None:
+        #     # unlike the other things stored, this will depend on disk storage space
+        #     # since 1_000_000 images in RAM isn't great
+        #     self.image_replay_buffer = DiskImageReplayBuffer(capacity=capacity, img_shape=image_shape, save_path=image_disk_save_path)
 
         super().__init__(dataset_dict)
 
@@ -76,28 +76,33 @@ class ReplayBuffer(Dataset):
         return self._size
 
     def insert(self, data_dict: DatasetDict):
-        if "images" in data_dict:
-            assert self._insert_index == self.image_replay_buffer.insert_idx
-            self.image_replay_buffer.add(data_dict["images"])
-            del data_dict["images"]
+        # if "images" in data_dict:
+        #     assert self._insert_index == self.image_replay_buffer.insert_idx
+        #     self.image_replay_buffer.add(data_dict["images"])
+        #     del data_dict["images"]
 
         _insert_recursively(self.dataset_dict, data_dict, self._insert_index)
 
         self._insert_index = (self._insert_index + 1) % self._capacity
         self._size = min(self._size + 1, self._capacity)
 
-    def sample(self,
-               batch_size: int,
-               keys: Optional[Iterable[str]] = None,
-               indx: Optional[np.ndarray] = None) -> frozen_dict.FrozenDict:
-        if indx is None:
-            if hasattr(self.np_random, 'integers'):
-                indx = self.np_random.integers(len(self), size=batch_size)
-            else:
-                indx = self.np_random.randint(len(self), size=batch_size)
+    # def sample(self,
+    #            batch_size: int,
+    #            keys: Optional[Iterable[str]] = None,
+    #            indx: Optional[np.ndarray] = None) -> frozen_dict.FrozenDict:
+    #     if indx is None:
+    #         if hasattr(self.np_random, 'integers'):
+    #             indx = self.np_random.integers(len(self), size=batch_size)
+    #         else:
+    #             indx = self.np_random.randint(len(self), size=batch_size)
 
-        frozen_dict_batch = super().sample(batch_size, keys, indx)
+    #     frozen_dict_batch = super().sample(batch_size, keys, indx)
 
-        images = [self.image_replay_buffer[idx] for idx in indx]
+    #     import time
+    #     start = time.time()
+    #     images = [self.image_replay_buffer[idx] for idx in indx]
+    #     end = time.time()
+    #     print(f"{end - start} seconds to do image samples")
 
-        return frozen_dict_batch, images
+
+    #     return frozen_dict_batch, images

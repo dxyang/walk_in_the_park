@@ -8,7 +8,33 @@ import h5py
 import numpy as np
 from torch.utils.data import Dataset
 
-class ImageReplayBuffer(Dataset):
+class RAMImageReplayBuffer(Dataset):
+    def __init__(self, capacity: int, img_shape: Tuple[int]):
+        self.length = 0
+        self.capacity = capacity
+        self.insert_idx = 0
+
+        self.data = np.empty((capacity, *img_shape), dtype=np.uint8)
+
+    def __len__(self):
+        return self.length # this is the number of images stored
+
+    def __getitem__(self, idx):
+        if idx < 0 or idx >= self.length:
+            raise IndexError
+
+        return self.dset[idx]
+
+    def add(self, rgb_image):
+        self.data[self.insert_idx] = rgb_image
+        self.insert_idx =  self.insert_idx + 1 % self.capacity
+        self.length = min(self.length + 1, self.capacity)
+
+    def sample(self, batch_size):
+        idxs = np.random.randint(self.length, size=batch_size)
+        return self.data[idxs]
+
+class DiskImageReplayBuffer(Dataset):
     def __init__(self, capacity: int, img_shape: Tuple[int], save_path: str = None, read_only_if_exists: bool = False, should_print: bool = True):
         if os.path.exists(save_path):
             if read_only_if_exists:
