@@ -2,6 +2,7 @@
 h5py disk backed replay buffer for images
 '''
 from typing import Tuple
+import pickle
 import os
 
 import h5py
@@ -33,6 +34,32 @@ class RAMImageReplayBuffer(Dataset):
     def sample(self, batch_size):
         idxs = np.random.randint(self.length, size=batch_size)
         return self.data[idxs]
+
+    def save_to_disk(self, dir: str):
+        data_file = f"{dir}/image_buffer.npy"
+        params_file = f"{dir}/image_buffer_data.pkl"
+        params = {
+            "length": self.length,
+            "capacity": self.capacity,
+            "insert_idx": self.insert_idx,
+        }
+        with open(data_file, 'wb') as f:
+            np.save(f, self.data)
+        pickle.dump(params, open(params_file, 'wb'))
+
+
+    def restore_from_disk(self, dir: str):
+        data_file = f"{dir}/image_buffer.npy"
+        params_file = f"{dir}/image_buffer_data.pkl"
+
+        with open(data_file, 'rb') as f:
+            self.data = np.load(f)
+
+        params = pickle.load(open(params_file, 'rb'))
+
+        self.length = params["length"]
+        self.capacity = params["capacity"]
+        self.insert_idx = params["insert_idx"]
 
 class DiskImageReplayBuffer(Dataset):
     def __init__(self, capacity: int, img_shape: Tuple[int], save_path: str = None, read_only_if_exists: bool = False, should_print: bool = True):

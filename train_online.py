@@ -231,8 +231,7 @@ def main(_):
 
         with open(os.path.join(buffer_dir, f'buffer_{start_i}'), 'rb') as f:
             replay_buffer = pickle.load(f)
-        with open(os.path.join(buffer_dir, f'image_buffer_{start_i}'), 'rb') as f:
-            img_replay_buffer = pickle.load(f)
+        img_replay_buffer.restore_from_disk(buffer_dir)
 
         print(f"restoring checkpoint! {last_checkpoint} at t: {start_i}")
 
@@ -326,8 +325,7 @@ def main(_):
             os.makedirs(buffer_dir, exist_ok=True)
             with open(os.path.join(buffer_dir, f'buffer_{i+1}'), 'wb') as f:
                 pickle.dump(replay_buffer, f)
-            with open(os.path.join(buffer_dir, f'image_buffer_{i+1}'), 'wb') as f:
-                pickle.dump(img_replay_buffer, f)
+            img_replay_buffer.save_to_disk(buffer_dir)
 
 
 if __name__ == '__main__':
