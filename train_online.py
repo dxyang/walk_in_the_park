@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import pickle
 import shutil
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -57,25 +58,29 @@ def eval(env, agent, exp_dir: str, curr_step: int, num_episodes: int = 5):
         os.makedirs(str(video_dir))
     recorder = VideoRecorder(save_dir=video_dir, fps=env.hz)
 
+    def eefxyz_from_obs(obs):
+        if env.use_gripper:
+            return obs[-15:][:3]
+        else:
+            return obs[-14:][:3]
+
     all_progresses, all_masks, all_rewards = [], [], []
     for i in range(num_episodes):
         observation, done = env.reset(), False
         rgbs, progresses, masks, rewards = [], [], [], []
         rgbs.append(env.rgb.copy())
         while not done:
-            try:
-                action = agent.eval_actions(observation)
-                next_observation, r, done, info = env.step(action)
-                progress, mask, reward = env.lrf.last_pmr()
-                progresses.append(float(progress))
-                masks.append(float(mask))
-                rewards.append(float(reward))
-                rgbs.append(env.rgb.copy())
-                observation = next_observation
-                if done:
-                    break
-            except:
-                import pdb; pdb.set_trace()
+            action = agent.eval_actions(observation)
+            print(f"action: {action}, eef xyz: {eefxyz_from_obs(observation)}")
+            next_observation, r, done, info = env.step(action)
+            progress, mask, reward = env.lrf.last_pmr()
+            progresses.append(float(progress))
+            masks.append(float(mask))
+            rewards.append(float(reward))
+            rgbs.append(env.rgb.copy())
+            observation = next_observation
+            if done:
+                break
 
         # bookkeeping
         all_progresses.append(progresses)
@@ -146,7 +151,8 @@ def main(_):
     # exp_str = '020123_couscous_reach_rlwithppc'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '020123_couscous_reach_rlwithppc_bigsteps'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '020223_couscous_reach_rlwithppc_bigsteps_and_rankinginit'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    exp_str = '021723_debugnewcode'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    # exp_str = '021723_debugnewcode'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    exp_str = '022023_yogablock'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
 
     repo_root = Path.cwd()
     exp_dir = f'{repo_root}/walk_in_the_park/saved/{exp_str}'
@@ -200,8 +206,8 @@ def main(_):
                               env.action_space, **kwargs)
 
     chkpt_dir = f'{exp_dir}/checkpoints'
-    if os.path.exists(exp_dir):
-        shutil.rmtree(exp_dir)
+    # if os.path.exists(exp_dir):
+    #     shutil.rmtree(exp_dir)
     os.makedirs(chkpt_dir, exist_ok=True)
     buffer_dir = f'{exp_dir}/buffers'
     os.makedirs(buffer_dir, exist_ok=True)
@@ -281,16 +287,12 @@ def main(_):
                 wandb.log({f'training/{decode[k]}': v}, step=i)
 
         if i >= FLAGS.start_training:
-            import time
-
-            start = time.time()
             batch = replay_buffer.sample(FLAGS.batch_size * FLAGS.utd_ratio)
-            end = time.time()
-            print(f"{end - start} seconds to sample from replay buffer")
 
+            # start = time.time()
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
-            new_end = time.time()
-            print(f"{new_end - end} seconds to update agent")
+            # end = time.time()
+            # print(f"{end - start} seconds to update agent")
 
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
