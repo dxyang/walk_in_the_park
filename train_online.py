@@ -319,7 +319,7 @@ def main(_):
             '''
             run some eval episodes if we haven't run one in a while
             '''
-            if i - last_eval_idx > FLAGS.eval_interval:
+            if i - last_eval_idx > FLAGS.eval_interval and i >= FLAGS.start_training:
                 eval(env, agent, exp_dir, i)
                 last_eval_idx = i
 
