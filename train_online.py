@@ -50,6 +50,7 @@ config_flags.DEFINE_config_file(
 
 
 def eval(env, agent, exp_dir: str, curr_step: int, num_episodes: int = 5):
+    print(f"running {num_episodes} eval episodes!")
     # run some eval episodes and plot the reward to
     # get a sense of what real data looks like
     curr_step_str = str(curr_step).zfill(6)
@@ -65,13 +66,13 @@ def eval(env, agent, exp_dir: str, curr_step: int, num_episodes: int = 5):
             return obs[-14:][:3]
 
     all_progresses, all_masks, all_rewards = [], [], []
-    for i in range(num_episodes):
+    for i in tqdm.tqdm(range(num_episodes)):
         observation, done = env.reset(), False
         rgbs, progresses, masks, rewards = [], [], [], []
         rgbs.append(env.rgb.copy())
         while not done:
             action = agent.eval_actions(observation)
-            print(f"action: {action}, eef xyz: {eefxyz_from_obs(observation)}")
+            # print(f"action: {action}, eef xyz: {eefxyz_from_obs(observation)}")
             next_observation, r, done, info = env.step(action)
             progress, mask, reward = env.lrf.last_pmr()
             progresses.append(float(progress))
@@ -152,7 +153,8 @@ def main(_):
     # exp_str = '020123_couscous_reach_rlwithppc_bigsteps'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '020223_couscous_reach_rlwithppc_bigsteps_and_rankinginit'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '021723_debugnewcode'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    exp_str = '022023_yogablock'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    # exp_str = '022023_yogablock'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    exp_str = "codetest"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
 
     repo_root = Path.cwd()
     exp_dir = f'{repo_root}/walk_in_the_park/saved/{exp_str}'
@@ -235,6 +237,8 @@ def main(_):
 
         print(f"restoring checkpoint! {last_checkpoint} at t: {start_i}")
 
+    last_eval_idx = start_i
+
     '''
     setup learned reward function
     '''
@@ -251,8 +255,22 @@ def main(_):
         lrf.load_models()
     env.set_lrf(lrf)
 
+
+    '''
+    train video recorder to see how live data is being evaluated
+    '''
+    train_video_dir = Path(f"{exp_dir}/train")
+    if not os.path.exists(str(train_video_dir)):
+        os.makedirs(str(train_video_dir))
+    train_recorder = VideoRecorder(save_dir=train_video_dir, fps=env.hz)
+    progresses, masks, rewards = [], [], []
+
     observation, done = env.reset(), False
     image = env.get_image()
+
+    train_recorder.init(image)
+    rewards = []
+
     for i in tqdm.tqdm(range(start_i, FLAGS.max_steps),
                        smoothing=0.1,
                        disable=not FLAGS.tqdm):
@@ -262,6 +280,11 @@ def main(_):
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
         next_image = env.get_image()
+        progress, mask, reward = env.lrf.last_pmr()
+        train_recorder.record(next_image)
+        progresses.append(float(progress))
+        masks.append(float(mask))
+        rewards.append(float(reward))
 
         if not done or 'TimeLimit.truncated' in info:
             mask = 1.0
@@ -280,7 +303,34 @@ def main(_):
         image = next_image
 
         if done:
+            '''
+            video recorder + debug plot
+            '''
+            save_str = str(i).zfill(7)
+            train_recorder.save(f"{save_str}.mp4")
+            plt.clf(); plt.cla()
+            plt.plot(progresses, label="progress")
+            plt.plot(masks, label='mask')
+            plt.plot(rewards, label='reward')
+            plt.ylim(0, 1)
+            plt.legend()
+            plt.savefig(f"{train_video_dir}/{save_str}_pmr.png")
+
+            '''
+            run some eval episodes if we haven't run one in a while
+            '''
+            if i - last_eval_idx > FLAGS.eval_interval:
+                eval(env, agent, exp_dir, i)
+                last_eval_idx = i
+
+            '''
+            proper reset of the environment and some logging
+            '''
             observation, done = env.reset(), False
+            image = env.get_image()
+            progresses, masks, rewards = [], [], []
+            train_recorder.init(image)
+
             for k, v in info['episode'].items():
                 decode = {'r': 'return', 'l': 'length', 't': 'time'}
                 wandb.log({f'training/{decode[k]}': v}, step=i)
@@ -302,9 +352,6 @@ def main(_):
 
             if i % (FLAGS.lrf_update_frequency * 2) == 0:
                 lrf.eval_lrf()
-
-            if i % FLAGS.eval_interval == 0:
-                eval(env, agent, exp_dir, i)
 
         if i % FLAGS.checkpoint_interval == 0 and i > 0:
             checkpoints.save_checkpoint(chkpt_dir,
