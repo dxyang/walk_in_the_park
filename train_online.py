@@ -41,7 +41,7 @@ flags.DEFINE_boolean('tqdm', True, 'Use tqdm progress bar.')
 # flags.DEFINE_integer('control_frequency', 20, 'Control frequency.')
 flags.DEFINE_integer('utd_ratio', 20, 'Update to data ratio.')
 flags.DEFINE_boolean('real_robot', True, 'Use real robot.')
-flags.DEFINE_string('demo_dir', "/home/dxy/code/rewardlearning-robot/data/demos/couscous_reach", 'Demo directory')
+flags.DEFINE_string('demo_dir', "/home/dxy/code/rewardlearning-robot/data/demos/cabinet", 'Demo directory')
 config_flags.DEFINE_config_file(
     'config',
     'walk_in_the_park/configs/droq_config.py',
@@ -137,7 +137,7 @@ def main(_):
 
     from gym.wrappers.time_limit import TimeLimit
     from reward_extraction.reward_functions import RobotLearnedRewardFunction
-    from robot.env import SimpleRealFrankReach, LrfRealFrankaReach
+    from robot.env import SimpleRealFrankReach, LrfRealFrankaReach, LrfCabinetDoorOpenFranka
     from robot.utils import HZ
 
     # defaults
@@ -154,7 +154,8 @@ def main(_):
     # exp_str = '020223_couscous_reach_rlwithppc_bigsteps_and_rankinginit'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '021723_debugnewcode'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '022023_yogablock'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    exp_str = "codetest"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    exp_str = "022623_cabinet_open"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    # exp_str = "codetest"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
 
     repo_root = Path.cwd()
     exp_dir = f'{repo_root}/walk_in_the_park/saved/{exp_str}'
@@ -167,7 +168,7 @@ def main(_):
     r3m_embedding_dim = 2048 #512 #2048
 
     if FLAGS.real_robot:
-        env = LrfRealFrankaReach(
+        env = LrfCabinetDoorOpenFranka(
             home="default",
             hz=HZ,
             controller="cartesian",
@@ -177,8 +178,20 @@ def main(_):
             use_r3m=use_r3m,
             r3m_net=r3m_net,
             only_pos_control=True,
-            random_reset_home_pose=True,
+            random_reset_home_pose=False,
         )
+        # env = LrfRealFrankaReach(
+        #     home="default",
+        #     hz=HZ,
+        #     controller="cartesian",
+        #     mode="default",
+        #     use_camera=use_camera,
+        #     use_gripper=use_gripper,
+        #     use_r3m=use_r3m,
+        #     r3m_net=r3m_net,
+        #     only_pos_control=True,
+        #     random_reset_home_pose=True,
+        # )
         # env = SimpleRealFrankReach(
         #     goal=np.array([0.68, 0.0, 0.4]),
         #     home="default",
@@ -206,6 +219,7 @@ def main(_):
     kwargs = dict(FLAGS.config)
     agent = SACLearner.create(FLAGS.seed, env.observation_space,
                               env.action_space, **kwargs)
+
 
     chkpt_dir = f'{exp_dir}/checkpoints'
     # if os.path.exists(exp_dir):
