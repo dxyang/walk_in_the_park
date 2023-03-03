@@ -137,7 +137,7 @@ def main(_):
 
     from gym.wrappers.time_limit import TimeLimit
     from reward_extraction.reward_functions import RobotLearnedRewardFunction
-    from robot.env import SimpleRealFrankReach, LrfRealFrankaReach, LrfCabinetDoorOpenFranka
+    from robot.franka_env import SimpleRealFrankReach, LrfRealFrankaReach, LrfCabinetDoorOpenFranka
     from robot.utils import HZ
 
     # defaults
