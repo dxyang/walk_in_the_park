@@ -210,11 +210,6 @@ def main(_):
 
     env = TimeLimit(env, MAX_STEPS)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
-    # env = gym.wrappers.RecordVideo(
-    #     env,
-    #     f'videos/train_{FLAGS.action_filter_high_cut}',
-    #     episode_trigger=lambda x: True)
-    env.seed(FLAGS.seed)
 
     kwargs = dict(FLAGS.config)
     agent = SACLearner.create(FLAGS.seed, env.observation_space,
@@ -280,7 +275,7 @@ def main(_):
     progresses, masks, rewards = [], [], []
 
     observation, done = env.reset(), False
-    image = env.get_image()
+    image = env.rgb
 
     train_recorder.init(image)
     rewards = []
@@ -293,7 +288,7 @@ def main(_):
         else:
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
-        next_image = env.get_image()
+        next_image = env.rgb
         progress, mask, reward = env.lrf.last_pmr()
         train_recorder.record(next_image)
         progresses.append(float(progress))
@@ -341,7 +336,7 @@ def main(_):
             proper reset of the environment and some logging
             '''
             observation, done = env.reset(), False
-            image = env.get_image()
+            image = env.rgb
             progresses, masks, rewards = [], [], []
             train_recorder.init(image)
 
