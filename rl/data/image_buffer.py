@@ -28,7 +28,7 @@ class RAMImageReplayBuffer(Dataset):
 
     def add(self, rgb_image):
         self.data[self.insert_idx] = rgb_image
-        self.insert_idx =  self.insert_idx + 1 % self.capacity
+        self.insert_idx =  (self.insert_idx + 1) % self.capacity
         self.length = min(self.length + 1, self.capacity)
 
     def sample(self, batch_size):
