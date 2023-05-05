@@ -1,1 +1,1 @@
-from rl.data.replay_buffer import ReplayBuffer
+from walk_in_the_park.rl.data.replay_buffer import ReplayBuffer

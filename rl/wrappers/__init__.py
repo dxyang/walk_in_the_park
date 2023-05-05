@@ -18,9 +18,21 @@ class DictToBoxWrapper(ObservationWrapper):
 
     def observation(self, observation):
         return observation[self.obs_key]
+    
+class MultiDictToBoxWrapper(ObservationWrapper):
+    r"""Observation wrapper that selects one of the keys from a
+        dict obs space to expose to higher level consumers."""
+
+    def __init__(self, env: gym.Env, obs_key: str):
+        super(MultiDictToBoxWrapper, self).__init__(env)
+        self.obs_key = obs_key
+        self.observation_space = env.observation_space[self.obs_key]
+
+    def observation(self, observation):
+        return observation[self.obs_key], observation
 
 
-def wrap_gym(env: gym.Env, rescale_actions: bool = True, obs_key: str = None) -> gym.Env:
+def wrap_gym(env: gym.Env, rescale_actions: bool = True, obs_key: str = None, full_obs: bool=False) -> gym.Env:
     env = SinglePrecision(env)
     env = UniversalSeed(env)
     if rescale_actions:
@@ -29,6 +41,8 @@ def wrap_gym(env: gym.Env, rescale_actions: bool = True, obs_key: str = None) ->
     if isinstance(env.observation_space, gym.spaces.Dict):
         if obs_key is None:
             env = FlattenObservation(env)
+        elif full_obs:
+            env = MultiDictToBoxWrapper(env, obs_key)
         else:
             env = DictToBoxWrapper(env, obs_key)
 

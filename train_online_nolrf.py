@@ -159,7 +159,7 @@ def main(_):
     # exp_str = '020223_couscous_reach_rlwithppc_bigsteps_and_rankinginit'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '021723_debugnewcode'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '022023_yogablock'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    exp_str = "fixed????YOUBECHA"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    exp_str = "debuggingrlpdreach"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = "codetest"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
 
     repo_root = Path.cwd()
@@ -173,43 +173,9 @@ def main(_):
     r3m_embedding_dim = 512 #512 #2048
 
     if FLAGS.real_robot:
-        # env = LrfCabinetDoorOpenFranka(
-        #     home="default",
-        #     hz=HZ,
-        #     controller="cartesian",
-        #     mode="default",
-        #     use_camera=use_camera,
-        #     use_gripper=use_gripper,
-        #     use_r3m=use_r3m,
-        #     r3m_net=r3m_net,
-        #     only_pos_control=True,
-        #     random_reset_home_pose=False,
-        # )
-        # env = LrfRealFrankaReach(
-        #     home="default",
-        #     hz=HZ,
-        #     controller="cartesian",
-        #     mode="default",
-        #     use_camera=use_camera,
-        #     use_gripper=use_gripper,
-        #     use_r3m=use_r3m,
-        #     r3m_net=r3m_net,
-        #     only_pos_control=True,
-        #     random_reset_home_pose=True,
-        # )
-        # env = SimpleRealFrankReach(
-        #     goal=np.array([0.68, 0.0, 0.4]),
-        #     home="default",
-        #     hz=HZ,
-        #     controller="cartesian",
-        #     mode="default",
-        #     use_camera=use_camera,
-        #     use_gripper=use_gripper,
-        #     use_r3m=use_r3m,
-        #     only_pos_control=True
-        # )
+
         env = SimpleRealXArmReach(
-            goal=np.array([36.3, -10.2, 16.2]),
+            goal=np.array([45.4,-17.3, 18.0]),
             control_frequency_hz = HZ,
             scale_factor = 5,
             use_gripper = use_gripper,

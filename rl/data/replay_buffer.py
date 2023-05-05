@@ -6,8 +6,8 @@ import gym.spaces
 import numpy as np
 
 
-from rl.data.dataset import Dataset, DatasetDict
-from rl.data.image_buffer import DiskImageReplayBuffer
+from walk_in_the_park.rl.data.dataset import Dataset, DatasetDict
+from walk_in_the_park.rl.data.image_buffer import DiskImageReplayBuffer
 
 
 def _init_replay_dict(obs_space: gym.Space,
