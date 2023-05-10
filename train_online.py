@@ -43,7 +43,7 @@ flags.DEFINE_boolean('tqdm', True, 'Use tqdm progress bar.')
 # flags.DEFINE_integer('control_frequency', 20, 'Control frequency.')
 flags.DEFINE_integer('utd_ratio', 20, 'Update to data ratio.')
 flags.DEFINE_boolean('real_robot', True, 'Use real robot.')
-flags.DEFINE_string('demo_dir', "/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/wip_debug", 'Demo directory')
+flags.DEFINE_string('demo_dir', "/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/gail_debug", 'Demo directory')
 config_flags.DEFINE_config_file(
     'config',
     'walk_in_the_park/configs/droq_config.py',
@@ -142,20 +142,12 @@ def main(_):
 
     # defaults
     use_gripper, use_camera, use_r3m, obs_key = False, False, False, None
-    MAX_EPISODE_TIME_S = 3
+    MAX_EPISODE_TIME_S = 5
     MAX_STEPS = HZ * MAX_EPISODE_TIME_S
 
-    # exp_str = '013023_real_franka_reach'
     # exp_str = '013023_reach_with_gripper_and_camera'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_vec"
     # exp_str = 'r3m50_experiment'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_vec"
-    # exp_str = '020123_couscous_reach'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_vec"
-    # exp_str = '020123_couscous_reach_rlwithppc'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    # exp_str = '020123_couscous_reach_rlwithppc_bigsteps'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    # exp_str = '020223_couscous_reach_rlwithppc_bigsteps_and_rankinginit'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    # exp_str = '021723_debugnewcode'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    # exp_str = '022023_yogablock'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    # exp_str = "fixed????YOUBECHA"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    exp_str = "wip_relabel"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    exp_str = "fixed_gail"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = "codetest"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
 
     repo_root = Path.cwd()
@@ -170,7 +162,7 @@ def main(_):
 
     if FLAGS.real_robot:
         env = LrfRealXarmReach(
-            control_frequency_hz = 5,
+            control_frequency_hz = HZ,
             scale_factor = 5,
             use_gripper = use_gripper,
             use_camera = use_camera,
@@ -178,7 +170,7 @@ def main(_):
             r3m_net = r3m_net,
             random_reset_home_pose = False,
             low_collision_sensitivity = True,
-            goal=np.array([45.4,-17.3, 18.0])
+            goal=np.array([44.2, 11.6, 20.2])
         )
     else:
         assert False # what are you doing
@@ -245,10 +237,6 @@ def main(_):
         lrf.load_models()
     env.set_lrf(lrf)
 
-
-
-
-
     '''
     train video recorder to see how live data is being evaluated
     '''
@@ -264,6 +252,9 @@ def main(_):
 
     train_recorder.init(image)
     rewards = []
+
+    # from rl.data.util import add_to_ds
+    # add_to_ds(env, replay_buffer, f"{FLAGS.demo_dir}/demos.hdf")
 
     for i in tqdm.tqdm(range(start_i, FLAGS.max_steps),
                        smoothing=0.1,
@@ -333,10 +324,15 @@ def main(_):
             #     wandb.log({f'training/{decode[k]}': v}, step=i)
 
         if i >= FLAGS.start_training:
+            # In debug, we did this
+            # if(i == FLAGS.start_training):
+            #     lrf.train(FLAGS.utd_ratio)
+            from rl.data.util import update_RPB_reward
+                # update_RPB_reward(env, replay_buffer, i)
             batch = replay_buffer.sample(FLAGS.batch_size * FLAGS.utd_ratio)
 
             # start = time.time()
-            agent, update_info = agent.update(batch, FLAGS.utd_ratio)
+            # agent, update_info = agent.update(batch, FLAGS.utd_ratio)
             # end = time.time()
             # print(f"{end - start} seconds to update agent")
 
@@ -351,6 +347,9 @@ def main(_):
 
             if i % (FLAGS.lrf_update_frequency * 2) == 0:
                 lrf.eval_lrf()
+
+            # update RL then update agent
+            agent, update_info = agent.update(batch, FLAGS.utd_ratio)
 
         if i % FLAGS.checkpoint_interval == 0 and i > 0:
             checkpoints.save_checkpoint(chkpt_dir,
@@ -374,24 +373,7 @@ def main(_):
             img_replay_buffer.save_to_disk(buffer_dir)
 
 
-def update_RPB_reward(env, replay_buffer: ReplayBuffer, i):
-    old_ds_dict = replay_buffer.dataset_dict
-    time.sleep(0.1)
-
-    print(old_ds_dict['rewards'][:10])
-    for i, obs in enumerate(old_ds_dict['observations'][:i]):
-        old_ds_dict['rewards'][i] = env.calculate_reward(obs)
-    # updated_ds_dict = dict(
-    #         observations=old_ds_dict['observations'],
-    #         next_observations=old_ds_dict['next_observations'],
-    #         actions=old_ds_dict['actions'],
-    #         rewards=np.empty((capacity, ), dtype=np.float32),
-    #         masks=old_ds_dict['masks'],
-    #         dones=old_ds_dict['dones'],
-    #     )
-    # replay_buffer.dataset_dict
     
-    print(old_ds_dict['rewards'][:10])
 
 if __name__ == '__main__':
     app.run(main)

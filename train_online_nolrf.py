@@ -35,7 +35,7 @@ flags.DEFINE_integer('lrf_update_frequency', 1000, 'Update lrf every x timesteps
 flags.DEFINE_integer('eval_interval', 1000, 'Eval interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
-flags.DEFINE_integer('start_training', int(500),
+flags.DEFINE_integer('start_training', int(1000),
                      'Number of training steps to start training.')
 flags.DEFINE_boolean('tqdm', True, 'Use tqdm progress bar.')
 # flags.DEFINE_float('action_filter_high_cut', None, 'Action filter high cut.')
@@ -147,7 +147,7 @@ def main(_):
 
     # defaults
     use_gripper, use_camera, use_r3m, obs_key = False, False, False, None
-    MAX_EPISODE_TIME_S = 8
+    MAX_EPISODE_TIME_S = 3
     MAX_STEPS = HZ * MAX_EPISODE_TIME_S
 
     # exp_str = '013023_real_franka_reach'
@@ -159,7 +159,7 @@ def main(_):
     # exp_str = '020223_couscous_reach_rlwithppc_bigsteps_and_rankinginit'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '021723_debugnewcode'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = '022023_yogablock'; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
-    exp_str = "debuggingrlpdreach"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
+    exp_str = "wip_gt_nogrill_noln"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
     # exp_str = "codetest"; use_gripper, use_camera, use_r3m, obs_key = False, True, True, "r3m_with_ppc"
 
     repo_root = Path.cwd()
@@ -173,9 +173,8 @@ def main(_):
     r3m_embedding_dim = 512 #512 #2048
 
     if FLAGS.real_robot:
-
         env = SimpleRealXArmReach(
-            goal=np.array([45.4,-17.3, 18.0]),
+            goal=np.array([44.2, 11.6, 20.2]),
             control_frequency_hz = HZ,
             scale_factor = 5,
             use_gripper = use_gripper,

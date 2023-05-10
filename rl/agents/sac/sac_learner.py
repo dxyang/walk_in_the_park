@@ -44,7 +44,7 @@ class SACLearner(Agent):
                num_qs: int = 2,
                num_min_qs: Optional[int] = None,
                critic_dropout_rate: Optional[float] = None,
-               critic_layer_norm: bool = False,
+               critic_layer_norm: bool = False, # default is false
                target_entropy: Optional[float] = None,
                init_temperature: float = 1.0,
                sampled_backup: bool = True):
