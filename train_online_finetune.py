@@ -4,9 +4,22 @@ from pathlib import Path
 import pickle
 import shutil
 
+import torch
+
 import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
+
+import cv2 as cv
+import torch
+import torchvision.transforms as T
+transform = T.Compose([
+                T.Resize(256),
+                T.CenterCrop(224),
+                T.ToTensor(),  # divides by 255, will also convert to chw
+            ])
+from PIL import Image
+
 
 import gym
 import wandb
@@ -20,11 +33,12 @@ from rl.data.util import *
 from rl.evaluation import evaluate
 from rl.wrappers import wrap_gym
 from r3m import load_r3m
+from reward_extraction.models import Policy
 
 
 from cam.utils import VideoRecorder
 
-from robot.xarm_env import SimpleRealXArmReach, LrfRealXarmReach
+from robot.xarm_env import SimpleRealXArmReach, LrfRealXarmReach, FineTuneXArmReach
 
 FLAGS = flags.FLAGS
 
@@ -79,7 +93,7 @@ def eval(env, agent, exp_dir: str, curr_step: int, num_episodes: int = 3):
             action = agent.eval_actions(observation)
             # print(f"action: {action}, eef xyz: {eefxyz_from_obs(observation)}")
             next_observation, r, done, info = env.step(action)
-            progress, mask, reward = env.lrf.last_pmr()
+            progress, mask, reward = r
             progresses.append(float(progress))
             masks.append(float(mask))
             rewards.append(float(reward))
@@ -195,7 +209,7 @@ def main(_):
     r3m_embedding_dim = (2048 if res_net_sz == 50 else 512) #512 #2048
 
     if FLAGS.real_robot:
-        env = LrfRealXarmReach(
+        env = FineTuneXArmReach(
             control_frequency_hz = HZ,
             scale_factor = 20,
             use_gripper = use_gripper,
@@ -204,7 +218,7 @@ def main(_):
             r3m_net = r3m_net,
             random_reset_home_pose = False,
             low_collision_sensitivity = True,
-            goal=np.array([45.4, -17.3, 18.2]),
+            goal=np.load("/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/walk_in_the_park/R2R_data_end.npy"),
             obs_sz = r3m_embedding_dim,
             wait_on_reset=True
         )
@@ -259,30 +273,25 @@ def main(_):
     '''
     setup learned reward function
     '''
-    # NOTE: HORIZION MUST be equal to the expert steps, not your demo steps
-    lrf = RobotLearnedRewardFunction(
-        obs_size=r3m_embedding_dim,
-        exp_dir=exp_dir,
-        demo_path=f"{FLAGS.demo_dir}/demos.hdf",
-        replay_buffer=replay_buffer,
-        image_replay_buffer=img_replay_buffer,
-        horizon= DEMO_HRZ * HZ,
-        add_state_noise=False,
-        train_classify_with_mixup=False,
-        obs_is_image=False,
-        mask_reg=False,
-        log_rwd=False,
-        disable_ranking=False, # T for GAIL
-        sub_sampling=True,
-        kl_rwd=False
-    )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    obs_sz = 1024
+    hidden_depth = 6
+    hidden_layer_sz = 4096
+    classify_net = Policy(obs_sz, 1, hidden_layer_sz, hidden_depth).to(device)
+    classify_net.to(device)
+    classify_net.load_state_dict(torch.load(f"/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/walk_in_the_park/classify_net.pt"))
 
-    # from scratch.lrfTest import plotLrfVsDataset
-    # plotLrfVsDataset(FLAGS.demo_dir, lrf)
+    classify_net.eval()
 
-    if last_checkpoint is not None:
-        lrf.load_models()
-    env.set_lrf(lrf)
+    ranking_net = Policy(obs_sz, 1, hidden_layer_sz, hidden_depth).to(device)
+    ranking_net.to(device)
+    ranking_net.load_state_dict(torch.load(f"/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/walk_in_the_park/ranking_net.pt"))
+
+    ranking_net.eval()
+
+    env.set_net(ranking_net, classify_net)
+    
+
 
     '''
     train video recorder to see how live data is being evaluated
@@ -310,8 +319,11 @@ def main(_):
     expert_plt_path = Path(expert_plt_dir)
     if not os.path.exists(str(expert_plt_dir)):
         os.makedirs(str(expert_plt_dir))
+    
 
+    observations, actions, dones, next_observations = [], [], [], [] 
 
+    goal=np.load("/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/walk_in_the_park/R2R_data_end.npy"),
 
     for i in tqdm.tqdm(range(start_i, FLAGS.max_steps),
                        smoothing=0.1,
@@ -322,11 +334,13 @@ def main(_):
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
         next_image = env.rgb
-        progress, mask, reward = env.lrf.last_pmr()
+        reward = env.calculate_reward(image, VideoRecorder(save_dir=train_video_path, fps=env.hz), "temp.mp4")
+        progress, mask, reward = reward
         train_recorder.record(next_image)
         progresses.append(float(progress))
         masks.append(float(mask))
         rewards.append(float(reward))
+    
 
         if not done or 'TimeLimit.truncated' in info:
             mask = 1.0
@@ -350,6 +364,28 @@ def main(_):
             '''
             save_str = str(i).zfill(7)
             train_recorder.save(f"{save_str}.mp4")
+
+            train_save_path = f"{train_video_dir}/{save_str}.mp4"
+
+            cap = cv.VideoCapture(str(train_save_path))
+            frames = []
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                try:
+                    pil_img = Image.fromarray(frame)
+                except:
+                    continue
+                frame = transform(pil_img).unsqueeze(0).cpu().numpy()
+                frames.append(frame)
+            frames = torch.tensor(np.array(frames))
+            frames = frames.squeeze(1).to(device)
+            # import IPython; IPython.embed()
+            with torch.no_grad():
+                frames = r3m_net(frames * 255.0)
+            frames = frames.squeeze().cpu().numpy()
+
             plt.clf(); plt.cla()
             plt.plot(progresses, label="progress")
             plt.plot(masks, label='mask')
@@ -376,7 +412,6 @@ def main(_):
                                         step=i,
                                         keep=20,
                                         overwrite=True)
-                lrf.save_models(save_dir=savepath)
 
             if i - last_chkpt_idx > FLAGS.checkpoint_interval and i >= FLAGS.start_training:
                 print("Saving Checkpoint!")
@@ -388,7 +423,6 @@ def main(_):
                                         step=i,
                                         keep=20,
                                         overwrite=True)
-                lrf.save_models(save_dir=savepath)
 
             if i - last_buffer_save > FLAGS.buffer_saving_interval and i >= FLAGS.start_training:
                 print("Saving Buffer!")
@@ -418,54 +452,10 @@ def main(_):
             #     wandb.log({f'training/{decode[k]}': v}, step=i)
 
         if i >= FLAGS.start_training:
-            # In debug, we did this
-            if(i == FLAGS.start_training):
-                lrf.train(FLAGS.utd_ratio)
-                lrf.eval_lrf()
-                update_RPB_reward(env, replay_buffer, i)
             batch = replay_buffer.sample(FLAGS.batch_size * FLAGS.utd_ratio)
-
-            # if i % FLAGS.log_interval == 0:
-            #     for k, v in update_info.i
-            # 
-            # tems():
-            #         wandb.log({f'training/{k}': v}, step=i)
-
-            if i % FLAGS.lrf_update_frequency == 0:
-                lrf.train(FLAGS.utd_ratio)
-                lrf.eval_lrf()
-                update_RPB_reward(env, replay_buffer, i)
-                cur_plt_str = f"{expert_plt_dir}/step_{i}"
-                if not os.path.exists(str(cur_plt_str)):
-                    os.makedirs(str(cur_plt_str))
-                from rl.data.util import plot_2d_heatmap
-                plot_2d_heatmap(env, FLAGS.demo_dir, cur_plt_str, replay_buffer, i)
-                
 
             # update RL then update agent
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
-
-        # if i % FLAGS.checkpoint_interval == 0 and i > 0:
-        #     checkpoints.save_checkpoint(chkpt_dir,
-        #                                 agent,
-        #                                 step=i + 1,
-        #                                 keep=20,
-        #                                 overwrite=True)
-
-        #     if lrf._seen_on_policy_data:
-        #         lrf.save_models()
-        #         lrf.eval_lrf()
-
-        #     try:
-        #         shutil.rmtree(buffer_dir)
-        #     except:
-        #         pass
-
-        #     os.makedirs(buffer_dir, exist_ok=True)
-        #     with open(os.path.join(buffer_dir, f'buffer_{i+1}'), 'wb') as f:
-        #         pickle.dump(replay_buffer, f)
-        #     img_replay_buffer.save_to_disk(buffer_dir)
-
 
 
 

@@ -40,7 +40,7 @@ env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
 
 
 print("loading positive data ...")
-demo_dir = "/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/gail_debug"
+demo_dir = "/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/push"
 expert_data = RoboDemoDset(f"{demo_dir}/demos.hdf", read_only_if_exists=True)
 
 print("loading negative data")
@@ -79,10 +79,10 @@ r3m_vecs_expert = []
 rgb_all_expert = []
 eef_poses_expert = []
 r3m_vec_expert = []
-for i in range(20):
+for i in range(len(expert_data)):
     dat_rgb = expert_data.__getitem__(i)['rgb']
-    dat_eef = expert_data.__getitem__(i)['eef_pose'][:, -3:]
-    dat_r3mvec = expert_data.__getitem__(i)['eef_pose'][:, :-3]
+    dat_eef = expert_data.__getitem__(i)['eef_pose']
+    dat_r3mvec = expert_data.__getitem__(i)['r3m_vec']
     rgb_all_expert.append(dat_rgb)
     eef_poses_expert.append(dat_eef)
     r3m_vec_expert.append(dat_r3mvec)
@@ -97,50 +97,54 @@ r3m_vec_nonexpert = r3m_vec_nonexpert[:1000]
 r3m_vec_expert = np.asarray(r3m_vec_expert).reshape(-1,512)
 eef_poses_expert = np.asarray(eef_poses_expert).reshape(-1, 3)
 
-# import torchvision.transforms as T
-# import torch
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 rewards_nonexpert = env.debug_reward(r3m_vec_nonexpert)[1]
 rewards_expert = env.debug_reward(r3m_vec_expert)[1]
 
-
-# image_batch = lrf.image_replay_buffer.sample(batch_size=lrf.batch_size)
-# rb_images_tensor = torch.cat(
-#     [T.ToTensor()(img).unsqueeze(0) for img in image_batch],
-#     dim=0
-# ).to(device)
-
-# # apply data augmentation and convert into form ready for r3m
-# rb_processed_images = torch.cat(
-#     [lrf._train_transforms(rb_images_tensor[i * lrf.transform_batch_size: (i + 1) * lrf.transform_batch_size]) for i in range(int(lrf.batch_size / lrf.transform_batch_size))]
-# )
-
-# # convert to r3m vec
-# with torch.no_grad():
-#     rb_image_vecs = lrf.r3m_net(rb_images_tensor * 255.0) # r3m expects input to be 0-255
-# rb_cf_states = rb_image_vecs.cpu().squeeze().numpy()
-
-# rewards_nonexpert = env.debug_reward(rb_cf_states)[1]
-
-# import IPython
-# IPython.embed()
-
 def vis():
     plt.subplot(1, 2, 1)
-    plt.scatter(eef_pos_nonexpert[:, 0], eef_pos_nonexpert[:, 1], c=rewards_nonexpert)
-    plt.scatter(eef_poses_expert[:, 0], eef_poses_expert[:, 1], c=rewards_expert)
+    plt.scatter3D(eef_pos_nonexpert[:-3, 0], eef_pos_nonexpert[:-3, 1], eef_pos_nonexpert[:-3, 2], c=rewards_nonexpert)
+    plt.scatter3D(eef_poses_expert[:-3, 0], eef_poses_expert[:-3, 1], eef_poses_expert[:-3, 2], c=rewards_expert)
     plt.colorbar()
     plt.xlim(20, 70)
     plt.ylim(-10, 10)
     plt.subplot(1, 2, 2)
-    plt.scatter(eef_poses_expert[:, 0], eef_poses_expert[:, 1])
+    plt.scatter3D(eef_poses_expert[:, 0], eef_poses_expert[:, 1], eef_poses_expert[:, 1])
     plt.xlim(20, 70)
     plt.ylim(-10, 10)
     plt.show()
 
-vis()
+def vis_3d():
+    f1 = plt.figure(1)
+    ax = plt.axes(projection ="3d")
+    scttr1 = ax.scatter3D(eef_pos_nonexpert[:, 0], eef_pos_nonexpert[:, 1], eef_pos_nonexpert[:, 2], c=rewards_nonexpert)
+    ax.set_xlim(20, 70)
+    ax.set_ylim(-10, 10)
+    ax.set_zlim(17, 43)
+    f1.colorbar(scttr1, ax = ax)
+    f2 = plt.figure(2)
+    ax2 = plt.axes(projection = "3d")
+    ax2.set_xlim(20, 70)
+    ax2.set_ylim(-10, 10)
+    ax2.set_zlim(17, 43)
+    scttr2 = ax2.scatter3D(eef_poses_expert[:, 0], eef_poses_expert[:, 1], eef_poses_expert[:, 2], c=rewards_expert)
+    f2.colorbar(scttr2, ax=ax2)
+    f3 = plt.figure(3)
+    ax3 = plt.axes(projection = "3d")
+    ax3.set_xlim(20, 70)
+    ax3.set_ylim(-10, 10)
+    ax3.set_zlim(17, 43)
+    ax3.scatter3D(eef_pos_nonexpert[:, 0], eef_pos_nonexpert[:, 1], eef_pos_nonexpert[:, 2], c='r')
+    ax3.scatter3D(eef_poses_expert[:, 0], eef_poses_expert[:, 1], eef_poses_expert[:, 2], c='b')
+    plt.show()
+
+
+
+
+
+
+
 
 import IPython;
 IPython.embed()
+
+vis()
